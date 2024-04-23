@@ -6,7 +6,7 @@ from monai.transforms import AsDiscrete,EnsureChannelFirstd,Compose,CropForegrou
 from monai.metrics import DiceMetric
 import os
 from monai.inferers import sliding_window_inference
-from monai.data import CacheDataset, list_data_collate, decollate_batch, DataLoader
+from monai.data import CacheDataset, list_data_collate, decollate_batch, DataLoader, Dataset
 import torch 
 from monai.utils import set_determinism
 import glob
@@ -82,6 +82,18 @@ val_transforms = Compose(
             ]
 )
 
+class SpleenDataset(Dataset):
+    def __init__(self, file_names, transform):
+        self.file_names = file_names
+        self.transform = transform
+
+    def __getitem__(self, index):
+        file_names = self.file_names[index]
+        dataset = self.transform(file_names) 
+        return dataset
+    
+    def __len__(self):
+        return len(self.file_names)
 
 
 
@@ -119,18 +131,10 @@ class Lightning_Model(pytorch_lightning.LightningModule):
         # set deterministic training for reproducibility
         set_determinism(seed=0)
 
-        self.train_ds = CacheDataset(
-            data=train_files,
-            transform=train_transforms,
-            cache_rate=1.0,
-            num_workers=4,
-        )
-        self.val_ds = CacheDataset(
-            data=val_files,
-            transform=val_transforms,
-            cache_rate=1.0,
-            num_workers=4,
-        )
+        # self.train_ds = CacheDataset(data=train_files,transform=train_transforms,cache_rate=1.0,num_workers=4)
+        # self.val_ds = CacheDataset(data=val_files,transform=val_transforms,cache_rate=1.0,num_workers=4)
+        self.train_ds = SpleenDataset(file_names=train_files, transform=train_transforms)
+        self.val_ds = SpleenDataset(file_names=val_files, transform=val_transforms)
 
     def train_dataloader(self):
         train_loader = DataLoader(
