@@ -10,6 +10,12 @@ from data import retrieve_data_from_link
 
 
 if __name__=="__main__":
+
+    # Because of RuntimeError: received 0 items of ancdata
+    import resource
+    rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (2048, rlimit[1]))
+    
     
     retrieve_data_from_link()
     # initialise the LightningModule
@@ -22,7 +28,7 @@ if __name__=="__main__":
     # initialise Lightning's trainer.
     trainer = pytorch_lightning.Trainer(
         devices=[0],
-        max_epochs=600,
+        max_epochs=50,
         logger=tb_logger,
         enable_checkpointing=True,
         num_sanity_val_steps=1,
