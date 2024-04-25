@@ -98,7 +98,7 @@ class SpleenDataset(Dataset):
 
 
 class Lightning_Model(pytorch_lightning.LightningModule):
-    def __init__(self):
+    def __init__(self, tb_logger, max_epochs):
         super().__init__()
         self._model = UNet(
             spatial_dims=3,
@@ -115,7 +115,11 @@ class Lightning_Model(pytorch_lightning.LightningModule):
         self.dice_metric = DiceMetric(include_background=False, reduction="mean", get_not_nans=False)
         self.best_val_dice = 0
         self.best_val_epoch = 0
+
+        self.train_step_outputs = []
         self.validation_step_outputs = []
+        self.tb_logger = tb_logger
+        self.max_epochs = max_epochs
 
     def forward(self, x):
         return self._model(x)
@@ -158,8 +162,27 @@ class Lightning_Model(pytorch_lightning.LightningModule):
         images, labels = batch["image"], batch["label"]
         output = self.forward(images)
         loss = self.loss_function(output, labels)
-        tensorboard_logs = {"train_loss": loss.item()}
-        return {"loss": loss, "log": tensorboard_logs}
+        self.dice_metric(y_pred=output, y=labels)
+        d = {"train_loss": loss, "train_number": len(output)}
+        self.train_step_outputs.append(d)
+        return d
+    
+    def on_train_epoch_end(self):
+        train_loss, num_items = 0,0
+        for output in self.train_step_outputs:
+            train_loss += output["train_loss"].sum().item()
+            num_items += output["train_number"]
+        mean_train_dice = self.dice_metric.aggregate().item()
+        self.dice_metric.reset()
+        mean_train_loss = torch.tensor(train_loss/num_items)
+        tensorboard_logs = {"train_dice":mean_train_dice, "train_loss":mean_train_loss}
+
+        # Adding logs to TensorBoard
+        self.tb_logger.experiment.add_scalar("Train Loss",mean_train_loss,self.current_epoch)
+        self.tb_logger.experiment.add_scalar("Train Dice",mean_train_dice,self.current_epoch)
+
+        self.train_step_outputs.clear()
+        return {"log":tensorboard_logs}
 
     def validation_step(self, batch, batch_idx):
         images, labels = batch["image"], batch["label"]
@@ -182,17 +205,22 @@ class Lightning_Model(pytorch_lightning.LightningModule):
         mean_val_dice = self.dice_metric.aggregate().item()
         self.dice_metric.reset()
         mean_val_loss = torch.tensor(val_loss / num_items)
-        tensorboard_logs = {"val_dice": mean_val_dice,"val_loss": mean_val_loss,}
+        tensorboard_logs = {"val_dice": mean_val_dice,"val_loss": mean_val_loss}
+
+        # Adding logs to TensorBoard
+        self.tb_logger.experiment.add_scalar("Validation Loss",mean_val_loss,self.current_epoch)
+        self.tb_logger.experiment.add_scalar("Validation Dice",mean_val_dice,self.current_epoch)
 
         if mean_val_dice > self.best_val_dice:
             self.best_val_dice = mean_val_dice
             self.best_val_epoch = self.current_epoch
 
         print(
-            f"current epoch: {self.current_epoch} "
-            f"current mean dice: {mean_val_dice:.4f}"
-            f"\nbest mean dice: {self.best_val_dice:.4f} "
+            f"Epoch [{self.current_epoch + 1}/{self.max_epochs}], "
+            f"Mean Validation Mean Dice: {mean_val_dice:.4f}"
+            f"Best Validation Mean Dice: {self.best_val_dice:.4f} "
             f"at epoch: {self.best_val_epoch}"
+            f'Validation Loss: {mean_val_loss:.4f}, '
         )
         self.validation_step_outputs.clear()
         return {"log":tensorboard_logs}
