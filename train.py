@@ -7,7 +7,9 @@ from monai.inferers import sliding_window_inference
 from data import retrieve_data_from_link
 
 
-
+# For tensorboard tunneling 
+# Please use 
+# ssh -N -L 6007:127.0.0.1:6007 -i /home/shirshak/.ssh/id_ed25519 shirshak@124.41.198.88 
 
 if __name__=="__main__":
 
@@ -18,22 +20,27 @@ if __name__=="__main__":
     
     
     retrieve_data_from_link()
-    # initialise the LightningModule
-    model = Lightning_Model()
 
+    max_epochs=5,
+    
     # set up loggers and checkpoints
     log_dir = os.path.join("/home/shirshak/3D-SPLEEN-MONAI-Pt-Lightning", "logs")
     tb_logger = pytorch_lightning.loggers.TensorBoardLogger(save_dir=log_dir)
 
+
     # initialise Lightning's trainer.
     trainer = pytorch_lightning.Trainer(
         devices=[0],
-        max_epochs=50,
+        max_epochs=max_epochs,
         logger=tb_logger,
         enable_checkpointing=True,
         num_sanity_val_steps=1,
-        log_every_n_steps=16,
+        log_every_n_steps=5,
     )
+
+    # initialise the LightningModule
+    model = Lightning_Model(tb_logger = tb_logger, max_epochs=max_epochs)
+
 
     # train
     trainer.fit(model)
@@ -54,16 +61,19 @@ if __name__=="__main__":
             sw_batch_size = 4
             val_outputs = sliding_window_inference(val_data["image"].to(device), roi_size, sw_batch_size, model)
             # plot the slice [:, :, 80]
-            plt.figure("check", (18, 6))
-            plt.subplot(1, 3, 1)
-            plt.title(f"image {i}")
-            plt.imshow(val_data["image"][0, 0, :, :, 80], cmap="gray")
-            plt.subplot(1, 3, 2)
-            plt.title(f"label {i}")
-            plt.imshow(val_data["label"][0, 0, :, :, 80])
-            plt.subplot(1, 3, 3)
-            plt.title(f"output {i}")
-            plt.imshow(torch.argmax(val_outputs, dim=1).detach().cpu()[0, :, :, 80])
-            plt.show()
+            fig, ax = plt.subplots(1,3)
+            ax[0].set_title(f"image {i}")
+            ax[0].imshow(val_data["image"][0, 0, :, :, 80], cmap="gray")
+            
+            ax[1].set_title(f"label {i}")
+            ax[1].imshow(val_data["label"][0, 0, :, :, 80])
+            
+            ax[2].set_title(f"output {i}")
+            ax[2].imshow(torch.argmax(val_outputs, dim=1).detach().cpu()[0, :, :, 80])
+
+            fig.tight_layout()
+            fig.savefig(f'images/img_label_output.png')
+
+
 
 
