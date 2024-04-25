@@ -10,11 +10,16 @@ from monai.data import CacheDataset, list_data_collate, decollate_batch, DataLoa
 import torch 
 from monai.utils import set_determinism
 import glob
-
-
+import matplotlib.pyplot as plt
+import numpy as np
+from PIL import Image
 
 root_dir = "/mnt/Enterprise2/shirshak/"
 data_dir = os.path.join(root_dir, "Task09_Spleen")
+
+# set up loggers and checkpoints
+log_dir = os.path.join("/home/shirshak/3D-SPLEEN-MONAI-Pt-Lightning", "logs")
+tb_logger = pytorch_lightning.loggers.TensorBoardLogger(save_dir=log_dir)
 
 train_transforms = Compose(
             [
@@ -98,7 +103,7 @@ class SpleenDataset(Dataset):
 
 
 class Lightning_Model(pytorch_lightning.LightningModule):
-    def __init__(self, tb_logger, max_epochs):
+    def __init__(self, max_epochs):
         super().__init__()
         self._model = UNet(
             spatial_dims=3,
@@ -118,8 +123,8 @@ class Lightning_Model(pytorch_lightning.LightningModule):
 
         self.train_step_outputs = []
         self.validation_step_outputs = []
-        self.tb_logger = tb_logger
         self.max_epochs = max_epochs
+        self.image_logger_tensorboard = []
 
     def forward(self, x):
         return self._model(x)
@@ -162,24 +167,21 @@ class Lightning_Model(pytorch_lightning.LightningModule):
         images, labels = batch["image"], batch["label"]
         output = self.forward(images)
         loss = self.loss_function(output, labels)
-        self.dice_metric(y_pred=output, y=labels)
-        d = {"train_loss": loss, "train_number": len(output)}
+        d = {"loss": loss, "train_number": len(output)}
         self.train_step_outputs.append(d)
         return d
     
     def on_train_epoch_end(self):
         train_loss, num_items = 0,0
         for output in self.train_step_outputs:
-            train_loss += output["train_loss"].sum().item()
+            train_loss += output["loss"].sum().item()
             num_items += output["train_number"]
-        mean_train_dice = self.dice_metric.aggregate().item()
-        self.dice_metric.reset()
+
         mean_train_loss = torch.tensor(train_loss/num_items)
-        tensorboard_logs = {"train_dice":mean_train_dice, "train_loss":mean_train_loss}
+        tensorboard_logs = {"train_loss":mean_train_loss}
 
         # Adding logs to TensorBoard
-        self.tb_logger.experiment.add_scalar("Train Loss",mean_train_loss,self.current_epoch)
-        self.tb_logger.experiment.add_scalar("Train Dice",mean_train_dice,self.current_epoch)
+        tb_logger.experiment.add_scalar("Train Loss",mean_train_loss,self.current_epoch)
 
         self.train_step_outputs.clear()
         return {"log":tensorboard_logs}
@@ -193,9 +195,12 @@ class Lightning_Model(pytorch_lightning.LightningModule):
         outputs = [self.post_pred(i) for i in decollate_batch(outputs)]
         labels = [self.post_label(i) for i in decollate_batch(labels)]
         self.dice_metric(y_pred=outputs, y=labels)
-        d = {"val_loss": loss, "val_number": len(outputs)}
-        self.validation_step_outputs.append(d)
-        return d
+        dict = {"val_loss": loss, "val_number": len(outputs)}
+        self.validation_step_outputs.append(dict)
+
+        img_dict = {"image":images, "label":labels,"output":outputs}
+        self.image_logger_tensorboard.append(img_dict)
+        return dict
     
     def on_validation_epoch_end(self):
         val_loss, num_items = 0, 0
@@ -207,20 +212,53 @@ class Lightning_Model(pytorch_lightning.LightningModule):
         mean_val_loss = torch.tensor(val_loss / num_items)
         tensorboard_logs = {"val_dice": mean_val_dice,"val_loss": mean_val_loss}
 
+        for count, logged_images in enumerate(self.image_logger_tensorboard):
+            if count % 5 ==0:
+                image = logged_images["image"]
+                label = logged_images['label']
+                out = logged_images['output']
+
+                # print(np.stack((image),axis=0).shape) # (1, 1, 226, 157, 113)
+                # print(np.stack((label),axis=0).shape) # (1, 2, 226, 157, 113)
+                # print(np.stack((out),axis=0).shape) #(1, 2, 226, 157, 113) 
+
+                image = torch.as_tensor(np.stack((image),axis=0)).squeeze(dim=0).squeeze(dim=0)
+                label = torch.as_tensor(np.stack((label),axis=0)).squeeze(dim=0)
+                out = torch.as_tensor(np.stack((out),axis=0)).squeeze(dim=0)
+
+                fig, ax = plt.subplots(1,3)
+                ax[0].set_title(f"image {count}")
+                ax[0].imshow(image[:, :, 80], cmap="gray")
+                
+                ax[1].set_title(f"label {count}")
+                ax[1].imshow(label.argmax(0)[:, :, 80])
+                
+                ax[2].set_title(f"output {count}")
+                ax[2].imshow(out.argmax(0)[:, :, 80])
+
+                fig.tight_layout()
+
+                # Adding logs to TensorBoard
+                tb_logger.experiment.add_figure(f"Image {count}", fig, self.current_epoch)
+            
+            else:
+                continue
+
         # Adding logs to TensorBoard
-        self.tb_logger.experiment.add_scalar("Validation Loss",mean_val_loss,self.current_epoch)
-        self.tb_logger.experiment.add_scalar("Validation Dice",mean_val_dice,self.current_epoch)
+        tb_logger.experiment.add_scalar("Validation Loss",mean_val_loss,self.current_epoch)
+        tb_logger.experiment.add_scalar("Validation Dice",mean_val_dice,self.current_epoch)
+
 
         if mean_val_dice > self.best_val_dice:
             self.best_val_dice = mean_val_dice
             self.best_val_epoch = self.current_epoch
 
         print(
-            f"Epoch [{self.current_epoch + 1}/{self.max_epochs}], "
-            f"Mean Validation Mean Dice: {mean_val_dice:.4f}"
-            f"Best Validation Mean Dice: {self.best_val_dice:.4f} "
+            f"\nEpoch [{self.current_epoch}/{self.max_epochs}], "
+            f" Mean Validation Mean Dice: {mean_val_dice:.4f}"
+            f" Best Validation Mean Dice: {self.best_val_dice:.4f} "
             f"at epoch: {self.best_val_epoch}"
-            f'Validation Loss: {mean_val_loss:.4f}, '
+            f' Validation Loss: {mean_val_loss:.4f}, '
         )
         self.validation_step_outputs.clear()
         return {"log":tensorboard_logs}
