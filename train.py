@@ -11,17 +11,20 @@ from data import retrieve_data_from_link
 # Please use 
 # ssh -N -L 6007:127.0.0.1:6007 -i /home/shirshak/.ssh/id_ed25519 shirshak@124.41.198.88 
 
+# For logging after having logs in output directory
+# tensorboard --logdir=/home/shirshak/3D-SPLEEN-MONAI-Pt-Lightning/logs
+
 if __name__=="__main__":
 
     # Because of RuntimeError: received 0 items of ancdata
     import resource
     rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
-    resource.setrlimit(resource.RLIMIT_NOFILE, (2048, rlimit[1]))
+    resource.setrlimit(resource.RLIMIT_NOFILE, (4096, rlimit[1]))
     
     
     retrieve_data_from_link()
 
-    max_epochs=5,
+    max_epochs=5
     
     # set up loggers and checkpoints
     log_dir = os.path.join("/home/shirshak/3D-SPLEEN-MONAI-Pt-Lightning", "logs")
@@ -35,11 +38,11 @@ if __name__=="__main__":
         logger=tb_logger,
         enable_checkpointing=True,
         num_sanity_val_steps=1,
-        log_every_n_steps=5,
+        log_every_n_steps=20,
     )
 
     # initialise the LightningModule
-    model = Lightning_Model(tb_logger = tb_logger, max_epochs=max_epochs)
+    model = Lightning_Model(max_epochs=max_epochs)
 
 
     # train
@@ -72,7 +75,7 @@ if __name__=="__main__":
             ax[2].imshow(torch.argmax(val_outputs, dim=1).detach().cpu()[0, :, :, 80])
 
             fig.tight_layout()
-            fig.savefig(f'images/img_label_output.png')
+            fig.savefig(f'images/img_label_output{i}.png')
 
 
 
